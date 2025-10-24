@@ -1,0 +1,9 @@
+{"qid": "q3", "temp": 0.0, "round": 0, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{9}", "correct": true}
+{"qid": "q3", "temp": 0.3, "round": 0, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{8}", "correct": false}
+{"qid": "q3", "temp": 0.6, "round": 0, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{9}", "correct": true}
+{"qid": "q3", "temp": 0.9, "round": 0, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{8}", "correct": false}
+{"qid": "q3", "temp": 0.0, "round": 1, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{9}", "correct": true}
+{"qid": "q3", "temp": 0.3, "round": 1, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{10}", "correct": false}
+{"qid": "q3", "temp": 0.6, "round": 1, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{9}", "correct": true}
+{"qid": "q3", "temp": 0.9, "round": 1, "text": "Solution:\\nWe compute.\\n\\n\\\\boxed{10}", "correct": false}
+{"qid": "q3", "per_temp": {"0.0": {"N": 2, "C": 2}, "0.3": {"N": 2, "C": 0}, "0.6": {"N": 2, "C": 2}, "0.9": {"N": 2, "C": 0}}, "done": true}

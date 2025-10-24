@@ -1,0 +1,7 @@
+temps:
+  start: 0.0
+  end: 1.2
+  step: 0.1
+voting:
+  tau_intra: 0.8
+  tau_cross: 1.0
