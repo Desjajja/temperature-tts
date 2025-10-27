@@ -58,6 +58,27 @@ def main():
     ap.add_argument("--output", type=str, required=True)
     args = ap.parse_args()
 
+    # Lazy import tqdm if available; fall back to no-op wrapper
+    try:
+        from tqdm.auto import tqdm  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency
+        class _NoOpTqdm:
+            def __init__(self, iterable=None, total=None, desc=None, leave=True):
+                self._iterable = iterable if iterable is not None else range(total or 0)
+                self.total = total
+                self.n = 0
+            def __iter__(self):
+                for x in self._iterable:
+                    yield x
+            def update(self, n=1):
+                self.n += n
+            def set_postfix_str(self, s):
+                pass
+            def close(self):
+                pass
+        def tqdm(iterable=None, total=None, desc=None, leave=True):  # type: ignore
+            return _NoOpTqdm(iterable=iterable, total=total, desc=desc, leave=leave)
+
     temps = parse_temps(args.temps)
     # Prefer provided --ak, then env var
     api_key = args.ak if args.ak else os.environ.get("OPENAI_API_KEY")
@@ -75,7 +96,7 @@ def main():
     print(f"Temperatures: {temps} | samples_per_temp={args.samples_per_temp}")
     print(f"Voting: enabled={args.use_two_stage_voting}, tau_intra={args.tau_intra}, tau_cross={args.tau_cross}")
 
-    for ex in dataset:
+    for ex in tqdm(dataset, total=len(dataset), desc="Questions", leave=True):
         qid = ex["id"]
         qtext = ex["question"]
         ref = ex.get("answer", None)
@@ -85,37 +106,46 @@ def main():
         per_temp_counts = {t: {"N": 0, "C": 0} for t in temps}
 
         log_path = os.path.join(args.output, "logs", f"{qid}.jsonl")
+        total_samples = args.samples_per_temp * len(temps)
         with open(log_path, "w") as flog:
             early_exit = False
-            for round_idx in range(args.samples_per_temp):
-                for t in temps:
-                    if early_exit:
-                        break
-                    text = sampler.generate_one(prompt, temperature=t)
-                    correct = False
-                    if ref is not None:
-                        try:
-                            correct = bool(verify_fn(text, ref))
-                        except Exception:
-                            correct = False
-
-                    rec = {"qid": qid, "temp": t, "round": round_idx, "text": text, "correct": correct}
-                    flog.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                    per_temp_counts[t]["N"] += 1
-                    if correct:
-                        per_temp_counts[t]["C"] += 1
-
-                    if voter is not None:
-                        m = re.search(r"\\boxed\{(-?\d+)\}", text or "")
-                        ans_str = m.group(1) if m else (text.strip().splitlines()[-1] if text.strip() else "")
-                        voter.add_answer(t, ans_str)
-                        early, decided, dbg = voter.step()
-                        if early:
-                            early_exit = True
-                            flog.write(json.dumps({"qid": qid, "early_exit": True, "decided_answer": decided, "debug": dbg}, ensure_ascii=False) + "\n")
+            sb = tqdm(total=total_samples, desc=f"Q {qid}", leave=False)
+            try:
+                for round_idx in range(args.samples_per_temp):
+                    for t in temps:
+                        if early_exit:
                             break
+                        text = sampler.generate_one(prompt, temperature=t)
+                        correct = False
+                        if ref is not None:
+                            try:
+                                correct = bool(verify_fn(text, ref))
+                            except Exception:
+                                correct = False
+
+                        rec = {"qid": qid, "temp": t, "round": round_idx, "text": text, "correct": correct}
+                        flog.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                        flog.flush()
+                        per_temp_counts[t]["N"] += 1
+                        if correct:
+                            per_temp_counts[t]["C"] += 1
+
+                        if voter is not None:
+                            m = re.search(r"\\boxed\{(-?\d+)\}", text or "")
+                            ans_str = m.group(1) if m else (text.strip().splitlines()[-1] if text.strip() else "")
+                            voter.add_answer(t, ans_str)
+                            early, decided, dbg = voter.step()
+                            if early:
+                                early_exit = True
+                                flog.write(json.dumps({"qid": qid, "early_exit": True, "decided_answer": decided, "debug": dbg}, ensure_ascii=False) + "\n")
+                                flog.flush()
+                        sb.set_postfix_str(f"t={t}, round={round_idx}, C/N={per_temp_counts[t]['C']}/{per_temp_counts[t]['N']}")
+                        sb.update(1)
+            finally:
+                sb.close()
 
             flog.write(json.dumps({"qid": qid, "per_temp": per_temp_counts, "done": True}, ensure_ascii=False) + "\n")
+            flog.flush()
 
     print(f"Run completed. Logs in: {args.output}/logs")
 

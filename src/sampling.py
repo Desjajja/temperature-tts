@@ -48,7 +48,22 @@ class TransformersSampler(BaseSampler):
         import torch  # noqa
         from transformers import AutoModelForCausalLM, AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=torch.float16, device_map="auto")
+        # Newer Transformers prefer `dtype`; fall back to `torch_dtype` for older versions
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                dtype=torch.float16,  # type: ignore[arg-type]
+                device_map="auto",
+            )
+        except TypeError:
+            # Older versions: use torch_dtype
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.float16,
+                device_map="auto",
+            )
 
     def generate_one(self, prompt: str, temperature: float) -> str:
         import torch
