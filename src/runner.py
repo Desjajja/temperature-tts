@@ -116,6 +116,7 @@ def main():
         if qtext is None:
             raise KeyError(f"Example {qid} is missing both 'problem' and 'question' fields.")
         ref = rec.get("answer", None)
+
         prompt = build_prompt(args.prompt_template, qtext)
 
         voter = TwoStageVoter(temperatures=temps, tau_intra=args.tau_intra, tau_cross=args.tau_cross) if args.use_two_stage_voting else None
@@ -151,8 +152,8 @@ def main():
                                 except Exception:
                                     correct = False
 
-                            rec = {"qid": qid, "temp": t, "round": round_idx, "text": text, "correct": correct}
-                            flog.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                            rec_log = {"qid": qid, "temp": t, "round": round_idx, "text": text, "correct": correct}
+                            flog.write(json.dumps(rec_log, ensure_ascii=False) + "\n")
                             flog.flush()
                             per_temp_counts[t]["N"] += 1
                             if correct:
