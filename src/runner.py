@@ -105,9 +105,17 @@ def main():
     print(f"Voting: enabled={args.use_two_stage_voting}, tau_intra={args.tau_intra}, tau_cross={args.tau_cross}")
 
     for ex in tqdm(dataset, total=len(dataset), desc="Questions", leave=True):
-        qid = ex["id"]
-        qtext = ex["question"]
-        ref = ex.get("answer", None)
+        rec = ex
+        if not isinstance(rec, dict):
+            raise TypeError(f"Dataset record has invalid type: {type(rec)}. Expected object/dict.")
+        if "id" not in rec:
+            raise KeyError("Dataset record missing required key 'id'.")
+        qid = rec["id"]
+        # Prefer new schema key 'problem'; fallback to legacy 'question'
+        qtext = rec.get("problem", rec.get("question"))
+        if qtext is None:
+            raise KeyError(f"Example {qid} is missing both 'problem' and 'question' fields.")
+        ref = rec.get("answer", None)
         prompt = build_prompt(args.prompt_template, qtext)
 
         voter = TwoStageVoter(temperatures=temps, tau_intra=args.tau_intra, tau_cross=args.tau_cross) if args.use_two_stage_voting else None
