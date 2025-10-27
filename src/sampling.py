@@ -54,6 +54,11 @@ class TransformersSampler(BaseSampler):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        # Prefer left padding for causal LM batch generation; ignore if tokenizer doesn't expose it
+        try:
+            self.tokenizer.padding_side = "left"
+        except Exception:
+            pass
 
         requested_device_map = device_map if device_map not in (None, "auto") else "auto"
 
@@ -99,6 +104,11 @@ class TransformersSampler(BaseSampler):
                 )
             else:
                 raise
+        # Ensure eval mode for inference
+        try:
+            self.model.eval()
+        except Exception:
+            pass
 
     def _generate(self, tokenized_inputs: "torch.Tensor", attention_mask: "torch.Tensor", temperature: float) -> "torch.Tensor":
         import torch
@@ -116,10 +126,27 @@ class TransformersSampler(BaseSampler):
         return self.generate_many([prompt], temperature=temperature)[0]
 
     def generate_many(self, prompts: List[str], temperature: float) -> List[str]:
-        import torch
         if not prompts:
             return []
-        tk = self.tokenizer(prompts, return_tensors="pt", padding=True)
+        # Use chat template if available (e.g., Qwen/Llama chat models). Fallback to raw prompts.
+        prompt_texts: List[str]
+        apply_ct = getattr(self.tokenizer, "apply_chat_template", None)
+        if callable(apply_ct):
+            try:
+                prompt_texts = [
+                    self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": p}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    for p in prompts
+                ]
+            except Exception:
+                prompt_texts = prompts
+        else:
+            prompt_texts = prompts
+
+        tk = self.tokenizer(prompt_texts, return_tensors="pt", padding=True)
         tk = {k: v.to(self.model.device) for k, v in tk.items()}
         out = self._generate(tk["input_ids"], tk["attention_mask"], temperature=temperature)
         if out.shape[0] != len(prompts):
