@@ -48,6 +48,9 @@ def main():
     ap.add_argument("--temps", type=str, default="0.0:1.2:0.1")
     ap.add_argument("--samples_per_temp", type=int, default=1024)
     ap.add_argument("--max_tokens", type=int, default=256)
+    ap.add_argument("--batch_size", type=int, default=1, help="Number of samples to request per temperature call. Higher values improve throughput if memory allows.")
+    ap.add_argument("--dtype", type=str, default="float16", help="Torch dtype to load the model with (e.g., float16, bfloat16, float32, auto).")
+    ap.add_argument("--device_map", type=str, default="auto", help="Transformers device map hint (e.g., auto, balanced, cuda:0).")
     ap.add_argument("--verifier", type=str, default="integer")
     # OpenAI-compatible endpoint options (e.g., LiteLLM proxy)
     ap.add_argument("--base-url", type=str, default=None, help="OpenAI-compatible base URL (e.g., LiteLLM proxy). Defaults to http://localhost:4000/chat/v1 when using OpenAI mode.")
@@ -79,6 +82,9 @@ def main():
         def tqdm(iterable=None, total=None, desc=None, leave=True):  # type: ignore
             return _NoOpTqdm(iterable=iterable, total=total, desc=desc, leave=leave)
 
+    if args.batch_size <= 0:
+        raise SystemExit("--batch_size must be a positive integer")
+
     temps = parse_temps(args.temps)
     # Prefer provided --ak, then env var
     api_key = args.ak if args.ak else os.environ.get("OPENAI_API_KEY")
@@ -87,6 +93,8 @@ def main():
         max_tokens=args.max_tokens,
         base_url=args.base_url if args.base_url else None,
         api_key=api_key,
+        dtype=args.dtype,
+        device_map=args.device_map,
     )
     verify_fn = get_verifier(args.verifier)
     ensure_dirs(args.output)
@@ -111,36 +119,50 @@ def main():
             early_exit = False
             sb = tqdm(total=total_samples, desc=f"Q {qid}", leave=False)
             try:
-                for round_idx in range(args.samples_per_temp):
+                for batch_start in range(0, args.samples_per_temp, args.batch_size):
+                    if early_exit:
+                        break
+                    round_indices = list(range(batch_start, min(args.samples_per_temp, batch_start + args.batch_size)))
+                    batch_outputs: Dict[float, List[str]] = {}
                     for t in temps:
+                        prompts = [prompt] * len(round_indices)
+                        texts = sampler.generate_many(prompts, temperature=t)
+                        if len(texts) != len(round_indices):
+                            raise RuntimeError(f"Sampler returned {len(texts)} texts for batch size {len(round_indices)} at temp {t}")
+                        batch_outputs[t] = texts
+
+                    for offset, round_idx in enumerate(round_indices):
+                        for t in temps:
+                            if early_exit:
+                                break
+                            text = batch_outputs[t][offset]
+                            correct = False
+                            if ref is not None:
+                                try:
+                                    correct = bool(verify_fn(text, ref))
+                                except Exception:
+                                    correct = False
+
+                            rec = {"qid": qid, "temp": t, "round": round_idx, "text": text, "correct": correct}
+                            flog.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                            flog.flush()
+                            per_temp_counts[t]["N"] += 1
+                            if correct:
+                                per_temp_counts[t]["C"] += 1
+
+                            if voter is not None:
+                                m = re.search(r"\\boxed\{(-?\d+)\}", text or "")
+                                ans_str = m.group(1) if m else (text.strip().splitlines()[-1] if text.strip() else "")
+                                voter.add_answer(t, ans_str)
+                                early, decided, dbg = voter.step()
+                                if early:
+                                    early_exit = True
+                                    flog.write(json.dumps({"qid": qid, "early_exit": True, "decided_answer": decided, "debug": dbg}, ensure_ascii=False) + "\n")
+                                    flog.flush()
+                            sb.set_postfix_str(f"t={t}, round={round_idx}, C/N={per_temp_counts[t]['C']}/{per_temp_counts[t]['N']}")
+                            sb.update(1)
                         if early_exit:
                             break
-                        text = sampler.generate_one(prompt, temperature=t)
-                        correct = False
-                        if ref is not None:
-                            try:
-                                correct = bool(verify_fn(text, ref))
-                            except Exception:
-                                correct = False
-
-                        rec = {"qid": qid, "temp": t, "round": round_idx, "text": text, "correct": correct}
-                        flog.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                        flog.flush()
-                        per_temp_counts[t]["N"] += 1
-                        if correct:
-                            per_temp_counts[t]["C"] += 1
-
-                        if voter is not None:
-                            m = re.search(r"\\boxed\{(-?\d+)\}", text or "")
-                            ans_str = m.group(1) if m else (text.strip().splitlines()[-1] if text.strip() else "")
-                            voter.add_answer(t, ans_str)
-                            early, decided, dbg = voter.step()
-                            if early:
-                                early_exit = True
-                                flog.write(json.dumps({"qid": qid, "early_exit": True, "decided_answer": decided, "debug": dbg}, ensure_ascii=False) + "\n")
-                                flog.flush()
-                        sb.set_postfix_str(f"t={t}, round={round_idx}, C/N={per_temp_counts[t]['C']}/{per_temp_counts[t]['N']}")
-                        sb.update(1)
             finally:
                 sb.close()
 
