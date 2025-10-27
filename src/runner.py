@@ -12,10 +12,33 @@ except Exception:
     sympy_v = None
 
 def load_dataset(path: str) -> List[Dict[str, Any]]:
-    data = []
+    """Load dataset from a file.
+
+    Supports:
+    - JSON array: [ {"id":..., "problem":..., "answer":...}, ... ]
+    - JSONL fallback: one JSON object per line
+    """
     with open(path, "r") as f:
-        for line in f:
-            data.append(json.loads(line))
+        raw = f.read().strip()
+    if not raw:
+        return []
+    # Prefer JSON array/object
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, list):
+            return obj  # type: ignore[return-value]
+        elif isinstance(obj, dict):
+            return [obj]  # type: ignore[return-value]
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback to JSONL (one JSON object per line)
+    data: List[Dict[str, Any]] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        data.append(json.loads(line))
     return data
 
 def parse_temps(spec: str) -> List[float]:
