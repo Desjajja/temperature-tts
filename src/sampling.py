@@ -103,9 +103,27 @@ class OpenAISampler(BaseSampler):
         return "".join(content)
 
 def get_sampler(model_name: str, max_tokens: int = 256, *, base_url: Optional[str] = None, api_key: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None):
-    # If an OpenAI-compatible base_url or api_key is provided, use the OpenAI sampler
-    if (base_url is not None) or (api_key is not None):
-        return OpenAISampler(model_name, max_tokens=max_tokens, base_url=base_url, api_key=api_key, extra_headers=extra_headers)
+    """
+    Return an appropriate sampler implementation.
+
+    Priority:
+    - "dummy" model always uses DummySampler (offline; no network calls).
+    - If an OpenAI-compatible endpoint info is provided, use OpenAISampler.
+    - Otherwise, fall back to TransformersSampler.
+    """
+    # Never route the dummy model through network-backed samplers
     if model_name.lower() == "dummy":
         return DummySampler(model_name, max_tokens=max_tokens)
+
+    # If an OpenAI-compatible base_url or api_key is provided, use the OpenAI sampler
+    if (base_url is not None) or (api_key is not None):
+        return OpenAISampler(
+            model_name,
+            max_tokens=max_tokens,
+            base_url=base_url,
+            api_key=api_key,
+            extra_headers=extra_headers,
+        )
+
+    # Default to local Transformers
     return TransformersSampler(model_name, max_tokens=max_tokens)
