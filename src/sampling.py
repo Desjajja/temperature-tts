@@ -192,7 +192,141 @@ class OpenAISampler(BaseSampler):
                 pass
         return "".join(content)
 
-def get_sampler(model_name: str, max_tokens: int = 256, *, base_url: Optional[str] = None, api_key: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None, dtype: Optional[str] = None, device_map: Optional[str] = None):
+class VLLMSampler(BaseSampler):
+    """
+    Sampler using vLLM engine (Python API).
+    Allows fine-grained control via SamplingParams and engine init args.
+    """
+    def __init__(
+        self,
+        model_name: str,
+        max_tokens: int = 256,
+        *,
+        dtype: Optional[str] = None,
+        tensor_parallel_size: int = 1,
+        gpu_memory_utilization: float = 0.9,
+        swap_space: int = 0,
+        max_model_len: Optional[int] = None,
+        # default sampling params
+        vllm_top_p: Optional[float] = None,
+        vllm_top_k: Optional[int] = None,
+        vllm_repetition_penalty: Optional[float] = None,
+        vllm_presence_penalty: Optional[float] = None,
+        vllm_frequency_penalty: Optional[float] = None,
+    ):
+        super().__init__(model_name, max_tokens)
+        try:
+            from vllm import LLM  # type: ignore
+        except Exception as e:
+            raise RuntimeError("vLLM not available. Install with `pip install vllm`.") from e
+
+        # Initialize engine
+        engine_kwargs: Dict[str, Any] = {
+            "model": model_name,
+            "tensor_parallel_size": tensor_parallel_size,
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "swap_space": swap_space,
+            "trust_remote_code": True,
+        }
+        if dtype is not None:
+            engine_kwargs["dtype"] = dtype
+        if max_model_len is not None and max_model_len > 0:
+            engine_kwargs["max_model_len"] = max_model_len
+
+        self._llm = LLM(**engine_kwargs)
+
+        # Store default sampling params (can be None to use vLLM defaults)
+        self._default_sampling: Dict[str, Any] = {
+            "top_p": vllm_top_p,
+            "top_k": vllm_top_k,
+            "repetition_penalty": vllm_repetition_penalty,
+            "presence_penalty": vllm_presence_penalty,
+            "frequency_penalty": vllm_frequency_penalty,
+        }
+
+        # Optional chat template support via HF tokenizer (best-effort)
+        self._apply_chat_template = None
+        try:
+            from transformers import AutoTokenizer  # type: ignore
+            _tk = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            if hasattr(_tk, "apply_chat_template"):
+                def _tmpl(msgs: List[Dict[str, str]]) -> str:
+                    return _tk.apply_chat_template(
+                        msgs, tokenize=False, add_generation_prompt=True
+                    )
+                self._apply_chat_template = _tmpl
+        except Exception:
+            self._apply_chat_template = None
+
+    def _to_prompt_texts(self, prompts: List[str]) -> List[str]:
+        if not prompts:
+            return []
+        if self._apply_chat_template is None:
+            return prompts
+        out: List[str] = []
+        for p in prompts:
+            try:
+                out.append(self._apply_chat_template([{ "role": "user", "content": p }]))
+            except Exception:
+                out.append(p)
+        return out
+
+    def generate_one(self, prompt: str, temperature: float) -> str:
+        return self.generate_many([prompt], temperature=temperature)[0]
+
+    def generate_many(self, prompts: List[str], temperature: float) -> List[str]:
+        if not prompts:
+            return []
+        from vllm import SamplingParams  # type: ignore
+
+        prompt_texts = self._to_prompt_texts(prompts)
+
+        sp_kwargs: Dict[str, Any] = {
+            "temperature": max(1e-6, float(temperature)),
+            "max_tokens": self.max_tokens,
+        }
+        # Merge defaults if provided
+        for k, v in self._default_sampling.items():
+            if v is not None:
+                sp_kwargs[k] = v
+        sampling_params = SamplingParams(**sp_kwargs)
+
+        outputs = self._llm.generate(prompt_texts, sampling_params)
+        # vLLM returns one RequestOutput per prompt, each with .outputs (list), select first
+        texts: List[str] = []
+        for out in outputs:
+            try:
+                if out.outputs:
+                    texts.append(out.outputs[0].text)
+                else:
+                    texts.append("")
+            except Exception:
+                texts.append("")
+        return texts
+
+
+def get_sampler(
+    model_name: str,
+    max_tokens: int = 256,
+    *,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+    dtype: Optional[str] = None,
+    device_map: Optional[str] = None,
+    backend: Optional[str] = None,
+    # vLLM engine args
+    vllm_tensor_parallel_size: Optional[int] = None,
+    vllm_gpu_memory_utilization: Optional[float] = None,
+    vllm_swap_space: Optional[int] = None,
+    vllm_max_model_len: Optional[int] = None,
+    # vLLM sampling defaults
+    vllm_top_p: Optional[float] = None,
+    vllm_top_k: Optional[int] = None,
+    vllm_repetition_penalty: Optional[float] = None,
+    vllm_presence_penalty: Optional[float] = None,
+    vllm_frequency_penalty: Optional[float] = None,
+):
     """
     Return an appropriate sampler implementation.
 
@@ -206,7 +340,7 @@ def get_sampler(model_name: str, max_tokens: int = 256, *, base_url: Optional[st
         return DummySampler(model_name, max_tokens=max_tokens)
 
     # If an OpenAI-compatible base_url or api_key is provided, use the OpenAI sampler
-    if (base_url is not None) or (api_key is not None):
+    if (base_url is not None) or (api_key is not None) or (backend == "openai"):
         return OpenAISampler(
             model_name,
             max_tokens=max_tokens,
@@ -215,5 +349,22 @@ def get_sampler(model_name: str, max_tokens: int = 256, *, base_url: Optional[st
             extra_headers=extra_headers,
         )
 
-    # Default to local Transformers
+    # vLLM backend explicitly requested
+    if backend == "vllm":
+        return VLLMSampler(
+            model_name,
+            max_tokens=max_tokens,
+            dtype=dtype,
+            tensor_parallel_size=vllm_tensor_parallel_size or 1,
+            gpu_memory_utilization=vllm_gpu_memory_utilization or 0.9,
+            swap_space=vllm_swap_space or 0,
+            max_model_len=vllm_max_model_len if (vllm_max_model_len and vllm_max_model_len > 0) else None,
+            vllm_top_p=vllm_top_p,
+            vllm_top_k=vllm_top_k,
+            vllm_repetition_penalty=vllm_repetition_penalty,
+            vllm_presence_penalty=vllm_presence_penalty,
+            vllm_frequency_penalty=vllm_frequency_penalty,
+        )
+
+    # Default or 'transformers' backend
     return TransformersSampler(model_name, max_tokens=max_tokens, dtype=dtype, device_map=device_map)

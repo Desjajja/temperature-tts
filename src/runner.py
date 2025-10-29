@@ -75,6 +75,8 @@ def main():
     ap.add_argument("--dtype", type=str, default="float16", help="Torch dtype to load the model with (e.g., float16, bfloat16, float32, auto).")
     ap.add_argument("--device_map", type=str, default="auto", help="Transformers device map hint (e.g., auto, balanced, cuda:0).")
     ap.add_argument("--verifier", type=str, default="integer")
+    # Backend selection
+    ap.add_argument("--backend", type=str, default="auto", choices=["auto", "transformers", "vllm", "openai"], help="LLM backend to use. 'auto' selects OpenAI if base-url/api-key provided, else local backends.")
     # OpenAI-compatible endpoint options (e.g., LiteLLM proxy)
     ap.add_argument("--base-url", type=str, default=None, help="OpenAI-compatible base URL (e.g., LiteLLM proxy). Defaults to http://localhost:4000/chat/v1 when using OpenAI mode.")
     ap.add_argument("--ak", type=str, default=None, help="API key for the OpenAI-compatible endpoint (falls back to OPENAI_API_KEY)")
@@ -82,6 +84,19 @@ def main():
     ap.add_argument("--tau_intra", type=float, default=0.8)
     ap.add_argument("--tau_cross", type=float, default=1.0)
     ap.add_argument("--output", type=str, required=True)
+
+    # vLLM engine configuration
+    ap.add_argument("--vllm-tensor-parallel-size", dest="vllm_tp", type=int, default=1, help="vLLM tensor parallel size")
+    ap.add_argument("--vllm-gpu-mem-utilization", dest="vllm_gpu_mem_util", type=float, default=0.9, help="vLLM GPU memory utilization (0-1)")
+    ap.add_argument("--vllm-swap-space", dest="vllm_swap_space", type=int, default=0, help="vLLM swap space size in GiB for CPU memory")
+    ap.add_argument("--vllm-max-model-len", dest="vllm_max_model_len", type=int, default=None, help="vLLM maximum model context length")
+
+    # vLLM sampling defaults (overridable per-call by temperature/max_tokens)
+    ap.add_argument("--vllm-top-p", dest="vllm_top_p", type=float, default=None, help="vLLM default top_p")
+    ap.add_argument("--vllm-top-k", dest="vllm_top_k", type=int, default=None, help="vLLM default top_k")
+    ap.add_argument("--vllm-repetition-penalty", dest="vllm_repetition_penalty", type=float, default=None, help="vLLM default repetition penalty")
+    ap.add_argument("--vllm-presence-penalty", dest="vllm_presence_penalty", type=float, default=None, help="vLLM default presence penalty")
+    ap.add_argument("--vllm-frequency-penalty", dest="vllm_frequency_penalty", type=float, default=None, help="vLLM default frequency penalty")
     args = ap.parse_args()
 
     # Lazy import tqdm if available; fall back to no-op wrapper
@@ -118,6 +133,16 @@ def main():
         api_key=api_key,
         dtype=args.dtype,
         device_map=args.device_map,
+        backend=(None if args.backend == "auto" else args.backend),
+        vllm_tensor_parallel_size=args.vllm_tp,
+        vllm_gpu_memory_utilization=args.vllm_gpu_mem_util,
+        vllm_swap_space=args.vllm_swap_space,
+        vllm_max_model_len=args.vllm_max_model_len,
+        vllm_top_p=args.vllm_top_p,
+        vllm_top_k=args.vllm_top_k,
+        vllm_repetition_penalty=args.vllm_repetition_penalty,
+        vllm_presence_penalty=args.vllm_presence_penalty,
+        vllm_frequency_penalty=args.vllm_frequency_penalty,
     )
     verify_fn = get_verifier(args.verifier)
     ensure_dirs(args.output)

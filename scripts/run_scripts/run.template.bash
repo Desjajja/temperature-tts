@@ -22,4 +22,20 @@ uv run python -m src.runner \
   --tau_cross 1.0 \
   --output todo_output_directory
 
+  # --- VLLM BACKEND (optional) ---
+  # To switch to vLLM, uncomment the following flags and set a real model id/path:
+  # --backend vllm \
+  # --model Qwen/Qwen2.5-0.5B-Instruct \
+  # Engine config:
+  # --vllm-tensor-parallel-size 1 \
+  # --vllm-gpu-mem-utilization 0.9 \
+  # --vllm-swap-space 4 \
+  # --vllm-max-model-len 32768 \
+  # Sampling defaults (temperature and max_tokens are already set above):
+  # --vllm-top-p 0.95 \
+  # --vllm-top-k 50 \
+  # --vllm-repetition-penalty 1.1 \
+  # --vllm-presence-penalty 0.0 \
+  # --vllm-frequency-penalty 0.0 \
+
   # --output "$(dirname "$(realpath "$0")")"
