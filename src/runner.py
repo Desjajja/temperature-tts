@@ -10,6 +10,10 @@ try:
     from .verifier import sympy_verify as sympy_v
 except Exception:
     sympy_v = None
+try:
+    from .verifier import math_verify_hf as mv_v
+except Exception:
+    mv_v = None
 
 def load_dataset(path: str) -> List[Dict[str, Any]]:
     """Load dataset from a file.
@@ -56,6 +60,10 @@ def get_verifier(name: str):
         if sympy_v is None:
             raise RuntimeError("sympy verifier requested but sympy not available.")
         return sympy_v.verify
+    elif name in {"math-verify", "math_verify", "mathverify", "mv"}:
+        if mv_v is None:
+            raise RuntimeError("math-verify requested but the package is not installed. Install with: pip install 'math-verify[antlr4_13_2]'")
+        return mv_v.verify
     else:
         raise ValueError(f"Unknown verifier: {name}")
 
@@ -74,7 +82,7 @@ def main():
     ap.add_argument("--batch_size", type=int, default=1, help="Number of samples to request per temperature call. Higher values improve throughput if memory allows.")
     ap.add_argument("--dtype", type=str, default="float16", help="Torch dtype to load the model with (e.g., float16, bfloat16, float32, auto).")
     ap.add_argument("--device_map", type=str, default="auto", help="Transformers device map hint (e.g., auto, balanced, cuda:0).")
-    ap.add_argument("--verifier", type=str, default="integer")
+    ap.add_argument("--verifier", type=str, default="math-verify")
     # Backend selection
     ap.add_argument("--backend", type=str, default="auto", choices=["auto", "transformers", "vllm", "openai"], help="LLM backend to use. 'auto' selects OpenAI if base-url/api-key provided, else local backends.")
     # OpenAI-compatible endpoint options (e.g., LiteLLM proxy)

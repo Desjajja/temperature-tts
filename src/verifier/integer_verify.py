@@ -11,6 +11,24 @@ def extract_boxed_int(text: str):
     except Exception:
         return None
 
-def verify(prediction_text: str, ref_answer: int) -> bool:
+def _coerce_ref_to_int(ref_answer):
+    """Attempt to coerce the gold answer to int.
+
+    Accepts int or numeric string (e.g., "5"). Returns None if not coercible.
+    """
+    try:
+        if isinstance(ref_answer, int):
+            return ref_answer
+        s = str(ref_answer).strip()
+        if re.fullmatch(r"[+-]?\d+", s):
+            return int(s)
+    except Exception:
+        pass
+    return None
+
+def verify(prediction_text: str, ref_answer) -> bool:
     got = extract_boxed_int(prediction_text)
-    return (got == ref_answer)
+    ref = _coerce_ref_to_int(ref_answer)
+    if got is None or ref is None:
+        return False
+    return got == ref

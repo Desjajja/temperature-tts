@@ -16,7 +16,7 @@ uv run python -m src.runner \
   --samples_per_temp 4 \
   --max_tokens 32 \
   --batch_size 1 \
-  --verifier integer \
+  --verifier math-verify \
   --use_two_stage_voting \
   --tau_intra 0.8  \
   --tau_cross 1.0 \
